@@ -57,15 +57,41 @@ for local dev. The UI shows an "in-memory" badge in that mode.
 
 ## How it works
 
+Order volume at scale makes cursor pagination impractical (it caps out and hits
+GraphQL cost throttling). Instead this app uses **Shopify Bulk Operations**: it
+submits one query that Shopify runs server-side across *all* matching orders and
+returns as a JSONL file, which the server streams and aggregates line-by-line
+(constant memory regardless of order count).
+
 ```
-components/Dashboard.jsx   UI: parameter panel + chart (recharts)
+components/Dashboard.jsx   UI: parameter panel + chart; submit→poll→render flow
 app/api/config             GET loads defaults, POST saves them to KV
-app/api/metric             POST fetches orders + computes the metric
-lib/shopify.js             read-only Admin GraphQL client w/ pagination
-lib/metrics.js             filtering pipeline + extensible metric registry
+app/api/metric/start       POST starts (or reuses) a bulk export for the window
+app/api/metric/poll        GET  reports export status + objectCount
+app/api/metric/result      POST streams the JSONL export and aggregates the metric
+lib/shopify.js             read-only Admin GraphQL client + bulk op helpers
+lib/bulkAggregate.js       streaming JSONL parser -> metric accumulator
+lib/metrics.js             filtering pipeline + extensible metric accumulator
+lib/bulkHelpers.js         window resolution + export cache keys
 lib/config.js              defaults + normalization/validation
-lib/store.js               KV (Upstash) with in-memory dev fallback
+lib/store.js               KV (Upstash) for config + export reuse cache
 ```
+
+### Request flow
+
+1. **start** — submits `bulkOperationRunQuery` for the date window. If a
+   completed export for the same window already exists (cached up to 6 days), it
+   is reused and no new query runs. Shopify allows only one bulk query per shop
+   at a time; if one is already running, the in-flight op is attached to.
+2. **poll** — the client polls `node(id:)` every ~1.5s for `status` /
+   `objectCount` and shows progress.
+3. **result** — once `COMPLETED`, the server streams the JSONL file and
+   aggregates. Because the export depends only on the date window + test flag,
+   changing the exclude-names or landing-path filter **re-aggregates the same
+   export** without re-querying Shopify.
+
+The `customerJourneySummary` (landing-page) fields are only requested when a
+landing-page filter is set — they're expensive and usually null otherwise.
 
 ### UPT definition used
 
@@ -95,6 +121,8 @@ within Shopify's attribution window.
 
 ### Notes / limits
 
-- Order fetch is capped at 5,000 orders per run (safety bound for serverless);
-  the UI flags when a result is capped. Narrow the date range for busy stores.
+- No order cap — bulk operations process the entire window server-side. Large
+  windows simply take longer to come back (the UI shows live object counts).
+- Only one bulk query runs per shop at a time (Shopify limit); a concurrent
+  "Run" attaches to the in-flight export rather than failing.
 - Bucketing uses the configurable IANA timezone (default `UTC`).

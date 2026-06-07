@@ -23,6 +23,10 @@ function daysAgoStr(days) {
   return d.toISOString().slice(0, 10);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export default function Dashboard() {
   const [config, setConfig] = useState(null);
   const [metrics, setMetrics] = useState([]);
@@ -34,6 +38,7 @@ export default function Dashboard() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [running, setRunning] = useState(false);
+  const [statusMsg, setStatusMsg] = useState("");
   const [savedMsg, setSavedMsg] = useState("");
 
   // Load persisted defaults.
@@ -57,26 +62,62 @@ export default function Dashboard() {
     setConfig((c) => ({ ...c, [key]: value }));
   }
 
+  // Submit a bulk export, poll until it completes, then aggregate the result.
   async function runMetric() {
     if (!config) return;
     setRunning(true);
     setError(null);
+    setStatusMsg("Submitting export…");
+
+    const window = {
+      start: `${startDate}T00:00:00.000Z`,
+      end: `${endDate}T23:59:59.999Z`,
+    };
+
     try {
-      const res = await fetch("/api/metric", {
+      // 1) start (or reuse a cached completed export)
+      const startRes = await fetch("/api/metric/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          config,
-          start: `${startDate}T00:00:00.000Z`,
-          end: `${endDate}T23:59:59.999Z`,
-        }),
+        body: JSON.stringify({ config, ...window }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Request failed");
+      const startData = await startRes.json();
+      if (!startRes.ok) throw new Error(startData.error || "Failed to start export");
+      const { opId, cached } = startData;
+      const win = startData.window || window;
+
+      // 2) poll until COMPLETED (skip if cached/already complete)
+      if (cached) {
+        setStatusMsg("Reusing recent export…");
+      } else {
+        for (;;) {
+          await sleep(1500);
+          const pollRes = await fetch(`/api/metric/poll?id=${encodeURIComponent(opId)}`);
+          const poll = await pollRes.json();
+          if (!pollRes.ok) throw new Error(poll.error || "Poll failed");
+          if (poll.status === "COMPLETED") break;
+          if (["FAILED", "CANCELED", "EXPIRED"].includes(poll.status)) {
+            throw new Error(`Export ${poll.status.toLowerCase()}${poll.errorCode ? `: ${poll.errorCode}` : ""}`);
+          }
+          setStatusMsg(`Shopify processing… ${Number(poll.objectCount || 0).toLocaleString()} objects`);
+        }
+      }
+
+      // 3) aggregate
+      setStatusMsg("Aggregating results…");
+      const resRes = await fetch("/api/metric/result", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opId, config, window: win }),
+      });
+      const data = await resRes.json();
+      if (!resRes.ok) throw new Error(data.error || "Failed to aggregate");
       setResult(data);
+      setStatusMsg("");
     } catch (e) {
       setError(e.message);
       setResult(null);
+      setStatusMsg("");
     } finally {
       setRunning(false);
     }
@@ -226,9 +267,11 @@ export default function Dashboard() {
           <button className="primary" onClick={runMetric} disabled={running}>
             {running ? "Running…" : "Run"}
           </button>
-          <button onClick={saveDefaults}>Save as defaults</button>
+          <button onClick={saveDefaults} disabled={running}>
+            Save as defaults
+          </button>
         </div>
-        <div className="toast">{savedMsg}</div>
+        <div className="toast">{statusMsg || savedMsg}</div>
         <div className="meta">
           Storage:{" "}
           <span className={`badge ${persistenceMode}`}>
@@ -288,11 +331,16 @@ export default function Dashboard() {
 
             <div className="meta">
               Window: {result.window.start.slice(0, 10)} → {result.window.end.slice(0, 10)} ·{" "}
-              {result.fetch.ordersFetched} orders fetched ({result.fetch.pages} page
-              {result.fetch.pages === 1 ? "" : "s"}) · {result.diagnostics.ordersMatched} matched filters
-              {result.fetch.capped && " · ⚠️ result capped at fetch limit"}
+              {Number(result.diagnostics.ordersScanned || 0).toLocaleString()} orders scanned ·{" "}
+              {Number(result.diagnostics.ordersMatched || 0).toLocaleString()} matched filters
+              {result.fetch?.cached && " · ♻︎ reused recent export"}
+              {result.fetch?.empty && " · no orders in window"}
               <br />
-              Shopify query: <code>{result.fetch.queryString}</code>
+              Bulk export ·{" "}
+              {Number(result.fetch?.objectCount || 0).toLocaleString()} objects processed
+              {typeof result.diagnostics.jsonlLines === "number"
+                ? ` · ${result.diagnostics.jsonlLines.toLocaleString()} JSONL rows`
+                : ""}
             </div>
           </>
         ) : (
