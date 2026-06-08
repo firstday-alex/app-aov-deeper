@@ -93,6 +93,30 @@ lib/store.js               KV (Upstash) for config + export reuse cache
 The `customerJourneySummary` (landing-page) fields are only requested when a
 landing-page filter is set — they're expensive and usually null otherwise.
 
+### Metrics
+
+| Metric | Definition |
+| --- | --- |
+| **Units per Transaction (UPT)** | included units ÷ transactions |
+| **Average Order Value (AOV)** | net sales ÷ transactions |
+| **Net Sales per Item Sold** | net sales ÷ included units |
+
+All three share one aggregation pass and the same item-exclusion filter, so
+`net-sales-per-item × UPT = AOV` holds exactly.
+
+**Sales basis** (configurable; applies to AOV & net-sales-per-item, computed per
+line item so exclusions apply):
+
+- `net` *(default)* — `originalTotal − all discount allocations` (line + order
+  level), excluding tax & shipping. This is Shopify's net-sales basis.
+- `gross` — `originalTotal`, before discounts.
+- `netWithTax` — net + per-line tax (shipping is never included; it isn't a line item).
+
+> **Returns/refunds are intentionally not subtracted** — net sales here reflects
+> sales at time of order (net of discounts), which is the preferred basis for
+> this dashboard. (This also sidesteps a bulk-query constraint: per-line refund
+> data can't be fetched in bulk, since connection nesting is capped at 2 levels.)
+
 ### UPT definition used
 
 - **units** = sum of line-item quantities, excluding items whose name/title/
@@ -111,13 +135,14 @@ filter is set. Match modes: starts-with (default), exact, contains.
 Note: customer-journey attribution is only populated for online-store orders
 within Shopify's attribution window.
 
-### Adding another metric (e.g. AOV)
+### Adding another metric
 
-1. Add the field you need (e.g. order total price) to the query in
-   `lib/shopify.js` and accumulate it in `computeMetric` (`lib/metrics.js`).
-2. Register the metric in the `METRICS` map with a `value(agg)` function.
-   It instantly appears in the UI's metric dropdown and reuses the same
-   filtering/bucketing pipeline. (An `aov` stub is included, commented out.)
+The accumulator already tracks `units`, `transactions`, and `sales` per bucket.
+If your metric is a ratio of those, just register it in the `METRICS` map in
+`lib/metrics.js` with a `value(agg)` function — it instantly appears in the UI
+dropdown and reuses the filtering/bucketing pipeline. If it needs a new raw
+input, add the field to the bulk query in `lib/shopify.js` and accumulate it in
+`createAccumulator` (and `finalize`'s `totals`/bucket objects).
 
 ### Notes / limits
 

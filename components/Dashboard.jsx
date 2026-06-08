@@ -27,6 +27,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function nf(n, decimals = 2) {
+  return Number(n || 0).toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
 export default function Dashboard() {
   const [config, setConfig] = useState(null);
   const [metrics, setMetrics] = useState([]);
@@ -161,6 +168,16 @@ export default function Dashboard() {
   }
 
   const metricUnit = result?.metric?.unit || "";
+  const isMoney = Boolean(result?.metric?.money);
+  const currency = result?.currency || "";
+
+  // Headline metric value: money metrics get a currency prefix + 2 decimals.
+  const headlineValue = result
+    ? isMoney
+      ? `${currency ? currency + " " : ""}${nf(result.totals.value, 2)}`
+      : nf(result.totals.value, 2)
+    : "";
+  const headlineUnit = isMoney ? metricUnit.replace(/^\//, "per ") : metricUnit;
 
   return (
     <div className="layout">
@@ -176,6 +193,15 @@ export default function Dashboard() {
                 {m.label}
               </option>
             ))}
+          </select>
+        </div>
+
+        <div className="field">
+          <label>Sales basis (AOV &amp; net sales metrics)</label>
+          <select value={config.salesBasis} onChange={(e) => update("salesBasis", e.target.value)}>
+            <option value="net">Net of discounts (excl. tax &amp; shipping)</option>
+            <option value="gross">Gross (before discounts)</option>
+            <option value="netWithTax">Net + tax (excl. shipping)</option>
           </select>
         </div>
 
@@ -290,9 +316,17 @@ export default function Dashboard() {
             <div className="kpis">
               <div className="kpi">
                 <div className="value">
-                  {result.totals.value} <span style={{ fontSize: 12, color: "var(--muted)" }}>{metricUnit}</span>
+                  {headlineValue}{" "}
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{headlineUnit}</span>
                 </div>
-                <div className="label">{result.metric.label} (period total)</div>
+                <div className="label">{result.metric.label} (period)</div>
+              </div>
+              <div className="kpi">
+                <div className="value">
+                  {currency ? currency + " " : ""}
+                  {nf(result.totals.sales, 2)}
+                </div>
+                <div className="label">Net sales</div>
               </div>
               <div className="kpi">
                 <div className="value">{result.totals.units.toLocaleString()}</div>
@@ -341,6 +375,12 @@ export default function Dashboard() {
               {typeof result.diagnostics.jsonlLines === "number"
                 ? ` · ${result.diagnostics.jsonlLines.toLocaleString()} JSONL rows`
                 : ""}
+              {isMoney && (
+                <>
+                  <br />
+                  Sales basis: {result.salesBasis} · returns/refunds not subtracted
+                </>
+              )}
             </div>
           </>
         ) : (
