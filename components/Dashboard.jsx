@@ -245,6 +245,28 @@ export default function Dashboard() {
         </div>
 
         <div className="field">
+          <label>Upsell line-item property key (optional)</label>
+          <input
+            value={config.upsellPropertyKey}
+            onChange={(e) => update("upsellPropertyKey", e.target.value)}
+            placeholder="_upsell"
+          />
+        </div>
+
+        <div className="field">
+          <label>Upsell property values (one per line / comma-separated; blank = any value)</label>
+          <textarea
+            value={
+              Array.isArray(config.upsellPropertyValues)
+                ? config.upsellPropertyValues.join("\n")
+                : config.upsellPropertyValues
+            }
+            onChange={(e) => update("upsellPropertyValues", e.target.value)}
+            placeholder={"cart-drawer\npdp-widget"}
+          />
+        </div>
+
+        <div className="field">
           <label>Order landing-page path (optional)</label>
           <input
             value={config.landingPagePath}
@@ -336,6 +358,16 @@ export default function Dashboard() {
                 <div className="value">{result.totals.transactions.toLocaleString()}</div>
                 <div className="label">Transactions</div>
               </div>
+              {config.upsellPropertyKey && (
+                <div className="kpi">
+                  <div className="value">
+                    {Number(result.totals.upsellUnits || 0).toLocaleString()}
+                  </div>
+                  <div className="label">
+                    Upsell units · {Number(result.totals.upsellOrders || 0).toLocaleString()} orders
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="chart-wrap">
