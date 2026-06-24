@@ -211,3 +211,111 @@ button:disabled {
   margin-top: 8px;
   min-height: 16px;
 }
+
+/* ---------- tabs ---------- */
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  border-radius: 0;
+  padding: 8px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* ---------- diagnosis verdict ---------- */
+.verdict {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--muted);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+
+.verdict.incline {
+  border-left-color: var(--accent-2);
+}
+
+.verdict.decline {
+  border-left-color: var(--danger);
+}
+
+.verdict.stable {
+  border-left-color: var(--accent);
+}
+
+.verdict-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.verdict-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.verdict.incline .verdict-icon {
+  color: var(--accent-2);
+}
+
+.verdict.decline .verdict-icon {
+  color: var(--danger);
+}
+
+.verdict.stable .verdict-icon {
+  color: var(--accent);
+}
+
+.verdict-title {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.verdict-detail {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 8px 0 0;
+}
+
+.badge.shape-sharp {
+  color: #d8a657;
+  border-color: #d8a657;
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.badge.shape-gradual {
+  color: var(--accent);
+  border-color: var(--accent);
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.badge.shape-stable {
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}

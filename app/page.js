@@ -1,4 +1,4 @@
-import Dashboard from "@/components/Dashboard";
+import AppTabs from "@/components/AppTabs";
 
 export default function Page() {
   return (
@@ -8,7 +8,7 @@ export default function Page() {
         Configurable, read-only Shopify metrics. Slice units-per-transaction by
         time, excluded products, and order landing-page path.
       </p>
-      <Dashboard />
+      <AppTabs />
     </main>
   );
 }
