@@ -47,6 +47,7 @@ export default function UptDiagnosis() {
   const [salesBasis, setSalesBasis] = useState("net");
   const [timeZone, setTimeZone] = useState("UTC");
   const [includeTestOrders, setIncludeTestOrders] = useState(false);
+  const [dropPartial, setDropPartial] = useState(true);
   const [excludeText, setExcludeText] = useState(DEFAULT_EXCLUSIONS.join("\n"));
 
   const [startDate, setStartDate] = useState(daysAgoStr(90));
@@ -148,8 +149,23 @@ export default function UptDiagnosis() {
   }
 
   const diagnosis = useMemo(
-    () => (result ? diagnoseTrend(result.buckets) : null),
-    [result]
+    () =>
+      result
+        ? diagnoseTrend(result.buckets, {
+            granularity,
+            timeZone,
+            windowStart: result.window?.start,
+            windowEnd: result.window?.end,
+            dropPartial,
+          })
+        : null,
+    [result, granularity, timeZone, dropPartial]
+  );
+
+  // Which period labels were treated as partial (excluded from the trend).
+  const partialLabels = useMemo(
+    () => new Set((diagnosis?.points || []).filter((p) => p.partial).map((p) => p.label)),
+    [diagnosis]
   );
 
   const chartData = useMemo(
@@ -158,15 +174,16 @@ export default function UptDiagnosis() {
         name: b.label,
         value: b.value,
         transactions: b.transactions,
+        partial: partialLabels.has(b.label),
       })),
-    [result]
+    [result, partialLabels]
   );
 
   // Highlight the single biggest period-over-period move when the trend is sharp.
   const shockDot = useMemo(() => {
     if (!diagnosis?.ok || diagnosis.shape !== "sharp") return null;
-    const step = diagnosis.stats.biggestStep;
-    const pt = diagnosis.points[step.index];
+    const label = diagnosis.stats.biggestStep?.to;
+    const pt = (diagnosis.points || []).find((p) => p.label === label);
     return pt ? { name: pt.label, value: pt.value } : null;
   }, [diagnosis]);
 
@@ -245,6 +262,18 @@ export default function UptDiagnosis() {
           />
           <label htmlFor="diagTest" style={{ margin: 0 }}>
             Include test orders
+          </label>
+        </div>
+
+        <div className="field checkbox">
+          <input
+            id="diagPartial"
+            type="checkbox"
+            checked={dropPartial}
+            onChange={(e) => setDropPartial(e.target.checked)}
+          />
+          <label htmlFor="diagPartial" style={{ margin: 0 }}>
+            Ignore partial first/last periods in the trend
           </label>
         </div>
 
@@ -348,7 +377,16 @@ export default function UptDiagnosis() {
                     name="UPT"
                     stroke="#5b8def"
                     strokeWidth={2}
-                    dot={{ r: 3 }}
+                    dot={(props) => {
+                      const { cx, cy, payload, key } = props;
+                      if (cx == null || cy == null) return null;
+                      // Partial edge periods: hollow grey dot (excluded from trend).
+                      return payload?.partial ? (
+                        <circle key={key} cx={cx} cy={cy} r={4} fill="#0b0f17" stroke="#8b97a7" strokeWidth={1.5} strokeDasharray="2 2" />
+                      ) : (
+                        <circle key={key} cx={cx} cy={cy} r={3} fill="#5b8def" />
+                      );
+                    }}
                   />
                   {shockDot && (
                     <ReferenceDot
@@ -377,6 +415,14 @@ export default function UptDiagnosis() {
                 and holds ≥{(diagnosis.thresholds.sharpConcentration * 100).toFixed(0)}% of the
                 window's movement; otherwise gradual. Flat band ±
                 {(diagnosis.thresholds.flatPct * 100).toFixed(0)}%.
+                {diagnosis.partialCount > 0 && (
+                  <>
+                    <br />
+                    ⊘ {diagnosis.partialCount} partial edge period
+                    {diagnosis.partialCount > 1 ? "s" : ""} (hollow dots) excluded from the
+                    trend — the window doesn't fully cover them.
+                  </>
+                )}
                 <br />
                 Window: {result.window.start.slice(0, 10)} → {result.window.end.slice(0, 10)} ·{" "}
                 {Number(result.diagnostics.ordersMatched || 0).toLocaleString()} orders matched ·{" "}
