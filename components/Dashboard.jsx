@@ -187,6 +187,51 @@ export default function Dashboard() {
     [result]
   );
 
+  // Share of orders that are new vs repeat, per period (0–100).
+  const newRepeatPctData = useMemo(
+    () =>
+      (result?.buckets || []).map((b) => {
+        const t = b.transactions || 0;
+        const p = (n) => (t ? +(((n || 0) / t) * 100).toFixed(1) : 0);
+        return {
+          name: b.label,
+          "% New": p(b.newTransactions),
+          "% Repeat": p(b.repeatTransactions),
+          "% Unknown": p(b.unknownTransactions),
+        };
+      }),
+    [result]
+  );
+
+  // AOV split by new vs repeat, per period. null (gap in the line) when a segment
+  // had no orders that period.
+  const segAovData = useMemo(
+    () =>
+      (result?.buckets || []).map((b) => ({
+        name: b.label,
+        "New AOV": b.newTransactions ? +(b.newSales / b.newTransactions).toFixed(2) : null,
+        "Repeat AOV": b.repeatTransactions
+          ? +(b.repeatSales / b.repeatTransactions).toFixed(2)
+          : null,
+      })),
+    [result]
+  );
+
+  // Discount penetration per period (0–100): code-usage and any-discount rates.
+  const discountPoPData = useMemo(
+    () =>
+      (result?.buckets || []).map((b) => {
+        const t = b.transactions || 0;
+        const p = (n) => (t ? +(((n || 0) / t) * 100).toFixed(1) : 0);
+        return {
+          name: b.label,
+          "Code %": p(b.codeOrders),
+          "Discount %": p(b.discountedOrders),
+        };
+      }),
+    [result]
+  );
+
   const discounts = result?.discounts || null;
 
   if (!config) {
@@ -508,6 +553,49 @@ export default function Dashboard() {
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
+
+              <h4 style={{ margin: "16px 0 6px", fontSize: 13, color: "var(--muted)" }}>
+                Share of orders · % new vs repeat, period over period
+              </h4>
+              <div className="chart-wrap">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={newRepeatPctData} margin={{ top: 10, right: 16, bottom: 10, left: -10 }}>
+                    <CartesianGrid stroke="#263042" strokeDasharray="3 3" />
+                    <XAxis dataKey="name" stroke="#8b97a7" tick={{ fontSize: 11 }} />
+                    <YAxis stroke="#8b97a7" tick={{ fontSize: 11 }} domain={[0, 100]} unit="%" />
+                    <Tooltip
+                      contentStyle={{ background: "#141a24", border: "1px solid #263042", borderRadius: 8 }}
+                      formatter={(v) => `${v}%`}
+                    />
+                    <Legend />
+                    <Line type="monotone" dataKey="% New" stroke="#3fb98c" strokeWidth={2} dot={{ r: 2 }} />
+                    <Line type="monotone" dataKey="% Repeat" stroke="#5b8def" strokeWidth={2} dot={{ r: 2 }} />
+                    {hasUnknownSeg && (
+                      <Line type="monotone" dataKey="% Unknown" stroke="#8b97a7" strokeWidth={1.5} strokeDasharray="3 3" dot={false} />
+                    )}
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+
+              <h4 style={{ margin: "16px 0 6px", fontSize: 13, color: "var(--muted)" }}>
+                AOV · new vs repeat, period over period{currency ? ` (${currency})` : ""}
+              </h4>
+              <div className="chart-wrap">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={segAovData} margin={{ top: 10, right: 16, bottom: 10, left: -10 }}>
+                    <CartesianGrid stroke="#263042" strokeDasharray="3 3" />
+                    <XAxis dataKey="name" stroke="#8b97a7" tick={{ fontSize: 11 }} />
+                    <YAxis stroke="#8b97a7" tick={{ fontSize: 11 }} domain={["auto", "auto"]} />
+                    <Tooltip
+                      contentStyle={{ background: "#141a24", border: "1px solid #263042", borderRadius: 8 }}
+                    />
+                    <Legend />
+                    <Line type="monotone" dataKey="New AOV" stroke="#3fb98c" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+                    <Line type="monotone" dataKey="Repeat AOV" stroke="#5b8def" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+
               <div className="meta">
                 New = customer's first order (customerOrderIndex 1); repeat = a prior order exists
                 (index &gt; 1). Test orders are never counted in the index.
@@ -545,6 +633,26 @@ export default function Dashboard() {
                     <div className="value">{(discounts.codes || []).length.toLocaleString()}</div>
                     <div className="label">Distinct codes used</div>
                   </div>
+                </div>
+
+                <h4 style={{ margin: "16px 0 6px", fontSize: 13, color: "var(--muted)" }}>
+                  Discount penetration · period over period
+                </h4>
+                <div className="chart-wrap">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={discountPoPData} margin={{ top: 10, right: 16, bottom: 10, left: -10 }}>
+                      <CartesianGrid stroke="#263042" strokeDasharray="3 3" />
+                      <XAxis dataKey="name" stroke="#8b97a7" tick={{ fontSize: 11 }} />
+                      <YAxis stroke="#8b97a7" tick={{ fontSize: 11 }} domain={[0, "auto"]} unit="%" />
+                      <Tooltip
+                        contentStyle={{ background: "#141a24", border: "1px solid #263042", borderRadius: 8 }}
+                        formatter={(v) => `${v}%`}
+                      />
+                      <Legend />
+                      <Line type="monotone" dataKey="Discount %" stroke="#e0a63f" strokeWidth={2} dot={{ r: 2 }} />
+                      <Line type="monotone" dataKey="Code %" stroke="#5b8def" strokeWidth={2} dot={{ r: 2 }} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
                 </div>
 
                 {discounts.codes && discounts.codes.length ? (
