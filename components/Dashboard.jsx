@@ -40,6 +40,61 @@ function pct(n, d, decimals = 1) {
   return `${((Number(n || 0) / d) * 100).toFixed(decimals)}%`;
 }
 
+// Relative % change from prev to curr; null when it can't be computed.
+function deltaPct(curr, prev) {
+  if (curr == null || prev == null || prev === 0) return null;
+  return ((curr - prev) / Math.abs(prev)) * 100;
+}
+
+// Sum a field across a set of buckets.
+const sumOver = (arr, key) => arr.reduce((s, b) => s + (Number(b[key]) || 0), 0);
+// Sum a per-period map's values over a set of period keys (for code PoP).
+const sumKeys = (byKey, keys) => {
+  if (!keys) return null;
+  let s = 0;
+  for (const [k, v] of Object.entries(byKey || {})) if (keys.has(k)) s += v;
+  return s;
+};
+// Share (%) of `num` over `den` across buckets; null if denominator is 0.
+const shareOver = (arr, numKey, denKey = "transactions") => {
+  const den = sumOver(arr, denKey);
+  return den ? (sumOver(arr, numKey) / den) * 100 : null;
+};
+// AOV (sales/txn) across buckets; null if no transactions.
+const aovOver = (arr, salesKey, txnKey) => {
+  const txn = sumOver(arr, txnKey);
+  return txn ? sumOver(arr, salesKey) / txn : null;
+};
+
+// A dynamic numeric axis domain padded around the data so small moves are
+// visible, clamped to [lo, hi]. Recharts calls these with the data extremes.
+function paddedDomain(pad, lo = -Infinity, hi = Infinity) {
+  return [
+    (dMin) => Math.max(lo, Math.floor(dMin - pad)),
+    (dMax) => Math.min(hi, Math.ceil(dMax + pad)),
+  ];
+}
+
+// KPI tile showing a "last half" value with its change vs the previous half.
+function PoPTile({ label, value, delta, fmt }) {
+  const color =
+    delta == null ? "var(--muted)" : delta >= 0 ? "var(--accent-2, #3fb98c)" : "var(--danger, #e5534b)";
+  return (
+    <div className="kpi">
+      <div className="value">{value == null ? "—" : fmt(value)}</div>
+      <div className="label">
+        {label}
+        {delta != null && (
+          <span style={{ color, marginLeft: 6, fontWeight: 600 }}>
+            {delta >= 0 ? "+" : ""}
+            {delta.toFixed(0)}% vs prev.
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [config, setConfig] = useState(null);
   const [metrics, setMetrics] = useState([]);
@@ -233,6 +288,46 @@ export default function Dashboard() {
   );
 
   const discounts = result?.discounts || null;
+
+  // Split the window's periods into two equal, adjacent halves: the most recent
+  // `k` periods ("current") vs the `k` before them ("previous"). Odd counts drop
+  // the oldest period so the halves stay the same length for a fair comparison.
+  const halves = useMemo(() => {
+    const bs = result?.buckets || [];
+    const n = bs.length;
+    const k = Math.floor(n / 2);
+    if (k < 1) return null;
+    const prev = bs.slice(n - 2 * k, n - k);
+    const curr = bs.slice(n - k);
+    return {
+      k,
+      prev,
+      curr,
+      currKeys: new Set(curr.map((b) => b.key)),
+      prevKeys: new Set(prev.map((b) => b.key)),
+    };
+  }, [result]);
+
+  // Last-half value + change-vs-previous-half for each headline breakdown metric.
+  const poP = useMemo(() => {
+    if (!halves) return null;
+    const { prev, curr } = halves;
+    const mk = (c, p) => ({ value: c, delta: deltaPct(c, p) });
+    return {
+      pctNew: mk(shareOver(curr, "newTransactions"), shareOver(prev, "newTransactions")),
+      pctRepeat: mk(shareOver(curr, "repeatTransactions"), shareOver(prev, "repeatTransactions")),
+      newAov: mk(aovOver(curr, "newSales", "newTransactions"), aovOver(prev, "newSales", "newTransactions")),
+      repeatAov: mk(
+        aovOver(curr, "repeatSales", "repeatTransactions"),
+        aovOver(prev, "repeatSales", "repeatTransactions")
+      ),
+      codePct: mk(shareOver(curr, "codeOrders"), shareOver(prev, "codeOrders")),
+      discountPct: mk(shareOver(curr, "discountedOrders"), shareOver(prev, "discountedOrders")),
+    };
+  }, [halves]);
+
+  const pctFmt = (v) => `${v.toFixed(1)}%`;
+  const moneyFmt = (v) => `${currency ? currency + " " : ""}${nf(v, 2)}`;
 
   if (!config) {
     return <div className="panel">Loading configuration…</div>;
@@ -537,6 +632,21 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
+              {poP && (
+                <>
+                  <div className="kpis">
+                    <PoPTile label="% New" value={poP.pctNew.value} delta={poP.pctNew.delta} fmt={pctFmt} />
+                    <PoPTile label="% Repeat" value={poP.pctRepeat.value} delta={poP.pctRepeat.delta} fmt={pctFmt} />
+                    <PoPTile label="New AOV" value={poP.newAov.value} delta={poP.newAov.delta} fmt={moneyFmt} />
+                    <PoPTile label="Repeat AOV" value={poP.repeatAov.value} delta={poP.repeatAov.delta} fmt={moneyFmt} />
+                  </div>
+                  <div className="meta" style={{ marginTop: -4 }}>
+                    “Last half” = the most recent {halves.k} {config.granularity}
+                    {halves.k > 1 ? "s" : ""} vs the {halves.k} before.
+                  </div>
+                </>
+              )}
+
               <div className="chart-wrap">
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={newRepeatData} margin={{ top: 10, right: 16, bottom: 10, left: -10 }}>
@@ -562,7 +672,7 @@ export default function Dashboard() {
                   <ComposedChart data={newRepeatPctData} margin={{ top: 10, right: 16, bottom: 10, left: -10 }}>
                     <CartesianGrid stroke="#263042" strokeDasharray="3 3" />
                     <XAxis dataKey="name" stroke="#8b97a7" tick={{ fontSize: 11 }} />
-                    <YAxis stroke="#8b97a7" tick={{ fontSize: 11 }} domain={[0, 100]} unit="%" />
+                    <YAxis stroke="#8b97a7" tick={{ fontSize: 11 }} domain={paddedDomain(3, 0, 100)} unit="%" allowDecimals={false} />
                     <Tooltip
                       contentStyle={{ background: "#141a24", border: "1px solid #263042", borderRadius: 8 }}
                       formatter={(v) => `${v}%`}
@@ -635,6 +745,23 @@ export default function Dashboard() {
                   </div>
                 </div>
 
+                {poP && (
+                  <div className="kpis">
+                    <PoPTile
+                      label="Code-usage rate"
+                      value={poP.codePct.value}
+                      delta={poP.codePct.delta}
+                      fmt={pctFmt}
+                    />
+                    <PoPTile
+                      label="Discounted-order rate"
+                      value={poP.discountPct.value}
+                      delta={poP.discountPct.delta}
+                      fmt={pctFmt}
+                    />
+                  </div>
+                )}
+
                 <h4 style={{ margin: "16px 0 6px", fontSize: 13, color: "var(--muted)" }}>
                   Discount penetration · period over period
                 </h4>
@@ -643,7 +770,7 @@ export default function Dashboard() {
                     <ComposedChart data={discountPoPData} margin={{ top: 10, right: 16, bottom: 10, left: -10 }}>
                       <CartesianGrid stroke="#263042" strokeDasharray="3 3" />
                       <XAxis dataKey="name" stroke="#8b97a7" tick={{ fontSize: 11 }} />
-                      <YAxis stroke="#8b97a7" tick={{ fontSize: 11 }} domain={[0, "auto"]} unit="%" />
+                      <YAxis stroke="#8b97a7" tick={{ fontSize: 11 }} domain={paddedDomain(2, 0, 100)} unit="%" allowDecimals={false} />
                       <Tooltip
                         contentStyle={{ background: "#141a24", border: "1px solid #263042", borderRadius: 8 }}
                         formatter={(v) => `${v}%`}
@@ -666,20 +793,33 @@ export default function Dashboard() {
                             <th className="num">% of code orders</th>
                             <th className="num">% of discounted orders</th>
                             <th className="num">% of all orders</th>
+                            <th className="num">Last half</th>
+                            <th className="num">Δ vs prev</th>
                             <th className="num">Discount {currency && `(${currency})`}</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {discounts.codes.map((c) => (
-                            <tr key={c.code}>
-                              <td className="path" title={c.code}>{c.code}</td>
-                              <td className="num">{c.orders.toLocaleString()}</td>
-                              <td className="num">{pct(c.orders, discounts.ordersWithCode)}</td>
-                              <td className="num">{pct(c.orders, discounts.discountedOrders)}</td>
-                              <td className="num">{pct(c.orders, discounts.totalOrders)}</td>
-                              <td className="num">{nf(c.discountAmount, 2)}</td>
-                            </tr>
-                          ))}
+                          {discounts.codes.map((c) => {
+                            const cur = halves ? sumKeys(c.byKey, halves.currKeys) : null;
+                            const prv = halves ? sumKeys(c.byKey, halves.prevKeys) : null;
+                            const d = deltaPct(cur, prv);
+                            const dColor =
+                              d == null ? "var(--muted)" : d >= 0 ? "var(--accent-2, #3fb98c)" : "var(--danger, #e5534b)";
+                            return (
+                              <tr key={c.code}>
+                                <td className="path" title={c.code}>{c.code}</td>
+                                <td className="num">{c.orders.toLocaleString()}</td>
+                                <td className="num">{pct(c.orders, discounts.ordersWithCode)}</td>
+                                <td className="num">{pct(c.orders, discounts.discountedOrders)}</td>
+                                <td className="num">{pct(c.orders, discounts.totalOrders)}</td>
+                                <td className="num">{cur == null ? "—" : cur.toLocaleString()}</td>
+                                <td className="num" style={{ color: dColor }}>
+                                  {d == null ? "—" : `${d >= 0 ? "+" : ""}${d.toFixed(0)}%`}
+                                </td>
+                                <td className="num">{nf(c.discountAmount, 2)}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -687,7 +827,10 @@ export default function Dashboard() {
                       “% of code orders” = code’s orders ÷ orders that used any code; “% of discounted
                       orders” also counts code-free (automatic) discounts in the denominator. An order
                       with multiple codes counts toward each, so “% of code orders” can sum to slightly
-                      over 100%.
+                      over 100%. “Last half” / “Δ vs prev” compare the most recent{" "}
+                      {halves ? `${halves.k} ${config.granularity}${halves.k > 1 ? "s" : ""}` : "half"}{" "}
+                      against the ones before. Codes starting with <code>REW-</code> are grouped as{" "}
+                      <strong>REW-LOYALTY-CODES</strong>.
                     </div>
                   </>
                 ) : (
