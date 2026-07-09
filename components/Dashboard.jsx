@@ -48,11 +48,12 @@ function deltaPct(curr, prev) {
 
 // Sum a field across a set of buckets.
 const sumOver = (arr, key) => arr.reduce((s, b) => s + (Number(b[key]) || 0), 0);
-// Sum a per-period map's values over a set of period keys (for code PoP).
-const sumKeys = (byKey, keys) => {
+// Sum one field of a per-period map ({key: {orders, amount}}) over a set of
+// period keys (for code period-over-period deltas).
+const sumKeys = (byKey, keys, field = "orders") => {
   if (!keys) return null;
   let s = 0;
-  for (const [k, v] of Object.entries(byKey || {})) if (keys.has(k)) s += v;
+  for (const [k, v] of Object.entries(byKey || {})) if (keys.has(k)) s += Number(v?.[field]) || 0;
   return s;
 };
 // Share (%) of `num` over `den` across buckets; null if denominator is 0.
@@ -73,6 +74,17 @@ function paddedDomain(pad, lo = -Infinity, hi = Infinity) {
     (dMin) => Math.max(lo, Math.floor(dMin - pad)),
     (dMax) => Math.min(hi, Math.ceil(dMax + pad)),
   ];
+}
+
+// Table cell rendering a relative % delta, colored by sign.
+function DeltaCell({ d }) {
+  const color =
+    d == null ? "var(--muted)" : d >= 0 ? "var(--accent-2, #3fb98c)" : "var(--danger, #e5534b)";
+  return (
+    <td className="num" style={{ color }}>
+      {d == null ? "—" : `${d >= 0 ? "+" : ""}${d.toFixed(0)}%`}
+    </td>
+  );
 }
 
 // KPI tile showing a "last half" value with its change vs the previous half.
@@ -323,6 +335,17 @@ export default function Dashboard() {
       ),
       codePct: mk(shareOver(curr, "codeOrders"), shareOver(prev, "codeOrders")),
       discountPct: mk(shareOver(curr, "discountedOrders"), shareOver(prev, "discountedOrders")),
+    };
+  }, [halves]);
+
+  // Half-window denominators for the code table's share deltas.
+  const codeDenoms = useMemo(() => {
+    if (!halves) return null;
+    return {
+      allCur: sumOver(halves.curr, "transactions"),
+      allPrev: sumOver(halves.prev, "transactions"),
+      discCur: sumOver(halves.curr, "discountedOrders"),
+      discPrev: sumOver(halves.prev, "discountedOrders"),
     };
   }, [halves]);
 
@@ -746,20 +769,30 @@ export default function Dashboard() {
                 </div>
 
                 {poP && (
-                  <div className="kpis">
-                    <PoPTile
-                      label="Code-usage rate"
-                      value={poP.codePct.value}
-                      delta={poP.codePct.delta}
-                      fmt={pctFmt}
-                    />
-                    <PoPTile
-                      label="Discounted-order rate"
-                      value={poP.discountPct.value}
-                      delta={poP.discountPct.delta}
-                      fmt={pctFmt}
-                    />
-                  </div>
+                  <>
+                    <div className="kpis">
+                      <PoPTile
+                        label="Orders using a code"
+                        value={poP.codePct.value}
+                        delta={poP.codePct.delta}
+                        fmt={pctFmt}
+                      />
+                      <PoPTile
+                        label="Discounted orders (incl. automatic)"
+                        value={poP.discountPct.value}
+                        delta={poP.discountPct.delta}
+                        fmt={pctFmt}
+                      />
+                    </div>
+                    <div className="meta" style={{ marginTop: -4 }}>
+                      <strong>Orders using a code</strong> = share of online-store orders that applied at
+                      least one discount code (code-usage rate). <strong>Discounted orders (incl.
+                      automatic)</strong> = share of orders with any discount, including automatic
+                      discounts that carry no code (discounted-order rate). Both compare the most recent{" "}
+                      {halves.k} {config.granularity}
+                      {halves.k > 1 ? "s" : ""} vs the {halves.k} before.
+                    </div>
+                  </>
                 )}
 
                 <h4 style={{ margin: "16px 0 6px", fontSize: 13, color: "var(--muted)" }}>
@@ -792,31 +825,41 @@ export default function Dashboard() {
                             <th className="num">Orders</th>
                             <th className="num">% of code orders</th>
                             <th className="num">% of discounted orders</th>
-                            <th className="num">% of all orders</th>
-                            <th className="num">Last half</th>
                             <th className="num">Δ vs prev</th>
-                            <th className="num">Discount {currency && `(${currency})`}</th>
+                            <th className="num">% of all orders</th>
+                            <th className="num">Δ vs prev</th>
+                            <th className="num">$ of code orders{currency ? ` (${currency})` : ""}</th>
+                            <th className="num">Δ vs prev</th>
                           </tr>
                         </thead>
                         <tbody>
                           {discounts.codes.map((c) => {
-                            const cur = halves ? sumKeys(c.byKey, halves.currKeys) : null;
-                            const prv = halves ? sumKeys(c.byKey, halves.prevKeys) : null;
-                            const d = deltaPct(cur, prv);
-                            const dColor =
-                              d == null ? "var(--muted)" : d >= 0 ? "var(--accent-2, #3fb98c)" : "var(--danger, #e5534b)";
+                            // Per-code order counts and discount $ for each half.
+                            const coCur = halves ? sumKeys(c.byKey, halves.currKeys, "orders") : null;
+                            const coPrev = halves ? sumKeys(c.byKey, halves.prevKeys, "orders") : null;
+                            const amtCur = halves ? sumKeys(c.byKey, halves.currKeys, "amount") : null;
+                            const amtPrev = halves ? sumKeys(c.byKey, halves.prevKeys, "amount") : null;
+                            // Share = code orders ÷ the relevant half denominator; delta is the
+                            // relative change of that share (or of the discount $) vs the prior half.
+                            const ratio = (n, d) => (d ? n / d : null);
+                            const dDisc = codeDenoms
+                              ? deltaPct(ratio(coCur, codeDenoms.discCur), ratio(coPrev, codeDenoms.discPrev))
+                              : null;
+                            const dAll = codeDenoms
+                              ? deltaPct(ratio(coCur, codeDenoms.allCur), ratio(coPrev, codeDenoms.allPrev))
+                              : null;
+                            const dAmt = deltaPct(amtCur, amtPrev);
                             return (
                               <tr key={c.code}>
                                 <td className="path" title={c.code}>{c.code}</td>
                                 <td className="num">{c.orders.toLocaleString()}</td>
                                 <td className="num">{pct(c.orders, discounts.ordersWithCode)}</td>
                                 <td className="num">{pct(c.orders, discounts.discountedOrders)}</td>
+                                <DeltaCell d={dDisc} />
                                 <td className="num">{pct(c.orders, discounts.totalOrders)}</td>
-                                <td className="num">{cur == null ? "—" : cur.toLocaleString()}</td>
-                                <td className="num" style={{ color: dColor }}>
-                                  {d == null ? "—" : `${d >= 0 ? "+" : ""}${d.toFixed(0)}%`}
-                                </td>
+                                <DeltaCell d={dAll} />
                                 <td className="num">{nf(c.discountAmount, 2)}</td>
+                                <DeltaCell d={dAmt} />
                               </tr>
                             );
                           })}
@@ -827,7 +870,8 @@ export default function Dashboard() {
                       “% of code orders” = code’s orders ÷ orders that used any code; “% of discounted
                       orders” also counts code-free (automatic) discounts in the denominator. An order
                       with multiple codes counts toward each, so “% of code orders” can sum to slightly
-                      over 100%. “Last half” / “Δ vs prev” compare the most recent{" "}
+                      over 100%. Each “Δ vs prev” is the relative change of the column to its left,
+                      comparing the most recent{" "}
                       {halves ? `${halves.k} ${config.granularity}${halves.k > 1 ? "s" : ""}` : "half"}{" "}
                       against the ones before. Codes starting with <code>REW-</code> are grouped as{" "}
                       <strong>REW-LOYALTY-CODES</strong>.
