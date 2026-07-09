@@ -12,6 +12,7 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
+import { zonedDayRangeToUtc } from "@/lib/tz";
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -149,10 +150,9 @@ export default function Dashboard() {
     setError(null);
     setStatusMsg("Submitting export…");
 
-    const window = {
-      start: `${startDate}T00:00:00.000Z`,
-      end: `${endDate}T23:59:59.999Z`,
-    };
+    // Interpret the picked dates as store-local calendar days so orders bucket
+    // on the merchant's day, not UTC.
+    const window = zonedDayRangeToUtc(startDate, endDate, config.timeZone);
 
     try {
       // 1) start (or reuse a cached completed export)
@@ -830,6 +830,8 @@ export default function Dashboard() {
                             <th className="num">Δ vs prev</th>
                             <th className="num">$ of code orders{currency ? ` (${currency})` : ""}</th>
                             <th className="num">Δ vs prev</th>
+                            <th className="num">Avg discount / order{currency ? ` (${currency})` : ""}</th>
+                            <th className="num">Δ vs prev</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -849,6 +851,11 @@ export default function Dashboard() {
                               ? deltaPct(ratio(coCur, codeDenoms.allCur), ratio(coPrev, codeDenoms.allPrev))
                               : null;
                             const dAmt = deltaPct(amtCur, amtPrev);
+                            // Avg discount per code order (depth), window + per half.
+                            const avgWin = c.orders ? c.discountAmount / c.orders : 0;
+                            const avgCur = coCur ? amtCur / coCur : null;
+                            const avgPrev = coPrev ? amtPrev / coPrev : null;
+                            const dAvg = deltaPct(avgCur, avgPrev);
                             return (
                               <tr key={c.code}>
                                 <td className="path" title={c.code}>{c.code}</td>
@@ -860,6 +867,8 @@ export default function Dashboard() {
                                 <DeltaCell d={dAll} />
                                 <td className="num">{nf(c.discountAmount, 2)}</td>
                                 <DeltaCell d={dAmt} />
+                                <td className="num">{nf(avgWin, 2)}</td>
+                                <DeltaCell d={dAvg} />
                               </tr>
                             );
                           })}

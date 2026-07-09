@@ -14,6 +14,7 @@ import {
   Legend,
 } from "recharts";
 import { diagnoseTrend } from "@/lib/diagnose";
+import { zonedDayRangeToUtc } from "@/lib/tz";
 
 // Product titles excluded from the UPT calculation by default. Matching is a
 // case-insensitive substring test (see lib/metrics.js), so "Gift" already covers
@@ -99,10 +100,7 @@ export default function UptDiagnosis() {
     setError(null);
     setStatusMsg("Submitting export…");
 
-    const window = {
-      start: `${startDate}T00:00:00.000Z`,
-      end: `${endDate}T23:59:59.999Z`,
-    };
+    const window = zonedDayRangeToUtc(startDate, endDate, timeZone);
     const config = buildConfig();
 
     // Top landing pages by sessions (ShopifyQL) — independent of the orders
