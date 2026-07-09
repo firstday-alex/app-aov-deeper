@@ -34,6 +34,12 @@ function nf(n, decimals = 2) {
   });
 }
 
+// Share of `d` as a percent string, guarding division by zero.
+function pct(n, d, decimals = 1) {
+  if (!d) return "—";
+  return `${((Number(n || 0) / d) * 100).toFixed(decimals)}%`;
+}
+
 export default function Dashboard() {
   const [config, setConfig] = useState(null);
   const [metrics, setMetrics] = useState([]);
@@ -162,6 +168,26 @@ export default function Dashboard() {
       })),
     [result]
   );
+
+  // New-vs-repeat transactions per period (stacked). "Unknown" = orders Shopify
+  // hasn't attributed a customer order index to.
+  const newRepeatData = useMemo(
+    () =>
+      (result?.buckets || []).map((b) => ({
+        name: b.label,
+        "New": b.newTransactions || 0,
+        "Repeat": b.repeatTransactions || 0,
+        "Unknown": b.unknownTransactions || 0,
+      })),
+    [result]
+  );
+
+  const hasUnknownSeg = useMemo(
+    () => (result?.buckets || []).some((b) => (b.unknownTransactions || 0) > 0),
+    [result]
+  );
+
+  const discounts = result?.discounts || null;
 
   if (!config) {
     return <div className="panel">Loading configuration…</div>;
@@ -311,6 +337,18 @@ export default function Dashboard() {
           </label>
         </div>
 
+        <div className="field checkbox">
+          <input
+            id="onlineStoreOnly"
+            type="checkbox"
+            checked={config.onlineStoreOnly}
+            onChange={(e) => update("onlineStoreOnly", e.target.checked)}
+          />
+          <label htmlFor="onlineStoreOnly" style={{ margin: 0 }}>
+            Online Store orders only (sourceName = web)
+          </label>
+        </div>
+
         <div className="actions">
           <button className="primary" onClick={runMetric} disabled={running}>
             {running ? "Running…" : "Run"}
@@ -401,6 +439,13 @@ export default function Dashboard() {
               {Number(result.diagnostics.ordersMatched || 0).toLocaleString()} matched filters
               {result.fetch?.cached && " · ♻︎ reused recent export"}
               {result.fetch?.empty && " · no orders in window"}
+              {result.onlineStoreOnly && (
+                <>
+                  {" "}· Online Store only ·{" "}
+                  {Number(result.diagnostics.excludedNonOnlineStore || 0).toLocaleString()} non-web
+                  orders excluded
+                </>
+              )}
               <br />
               Bulk export ·{" "}
               {Number(result.fetch?.objectCount || 0).toLocaleString()} objects processed
@@ -414,6 +459,134 @@ export default function Dashboard() {
                 </>
               )}
             </div>
+
+            {/* ---------------- New vs Repeat ---------------- */}
+            <div className="lp-breakdown">
+              <h3>New vs repeat customers · period over period</h3>
+              <div className="kpis">
+                <div className="kpi">
+                  <div className="value">
+                    {Number(result.totals.newTransactions || 0).toLocaleString()}
+                  </div>
+                  <div className="label">
+                    New orders · {pct(result.totals.newTransactions, result.totals.transactions)} of orders
+                  </div>
+                </div>
+                <div className="kpi">
+                  <div className="value">
+                    {Number(result.totals.repeatTransactions || 0).toLocaleString()}
+                  </div>
+                  <div className="label">
+                    Repeat orders ·{" "}
+                    {pct(result.totals.repeatTransactions, result.totals.transactions)} of orders
+                  </div>
+                </div>
+                {hasUnknownSeg && (
+                  <div className="kpi">
+                    <div className="value">
+                      {Number(result.totals.unknownTransactions || 0).toLocaleString()}
+                    </div>
+                    <div className="label">
+                      Unattributed · {pct(result.totals.unknownTransactions, result.totals.transactions)}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="chart-wrap">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={newRepeatData} margin={{ top: 10, right: 16, bottom: 10, left: -10 }}>
+                    <CartesianGrid stroke="#263042" strokeDasharray="3 3" />
+                    <XAxis dataKey="name" stroke="#8b97a7" tick={{ fontSize: 11 }} />
+                    <YAxis stroke="#8b97a7" tick={{ fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ background: "#141a24", border: "1px solid #263042", borderRadius: 8 }}
+                    />
+                    <Legend />
+                    <Bar dataKey="New" stackId="seg" fill="#3fb98c" />
+                    <Bar dataKey="Repeat" stackId="seg" fill="#5b8def" />
+                    {hasUnknownSeg && <Bar dataKey="Unknown" stackId="seg" fill="#4b5566" />}
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="meta">
+                New = customer's first order (customerOrderIndex 1); repeat = a prior order exists
+                (index &gt; 1). Test orders are never counted in the index.
+                {hasUnknownSeg &&
+                  " Unattributed orders have no customer order index yet (attribution pending or no online-store journey)."}
+              </div>
+            </div>
+
+            {/* ---------------- Discount code mix ---------------- */}
+            {discounts && (
+              <div className="lp-breakdown">
+                <h3>Discount code mix</h3>
+                <div className="kpis">
+                  <div className="kpi">
+                    <div className="value">
+                      {pct(discounts.ordersWithCode, discounts.totalOrders)}
+                    </div>
+                    <div className="label">
+                      Orders using a code ·{" "}
+                      {Number(discounts.ordersWithCode || 0).toLocaleString()} of{" "}
+                      {Number(discounts.totalOrders || 0).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="kpi">
+                    <div className="value">
+                      {pct(discounts.discountedOrders, discounts.totalOrders)}
+                    </div>
+                    <div className="label">
+                      Discounted orders (incl. automatic) ·{" "}
+                      {Number(discounts.discountedOrders || 0).toLocaleString()} of{" "}
+                      {Number(discounts.totalOrders || 0).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="kpi">
+                    <div className="value">{(discounts.codes || []).length.toLocaleString()}</div>
+                    <div className="label">Distinct codes used</div>
+                  </div>
+                </div>
+
+                {discounts.codes && discounts.codes.length ? (
+                  <>
+                    <div className="lp-table-wrap">
+                      <table className="lp-table">
+                        <thead>
+                          <tr>
+                            <th>Discount code</th>
+                            <th className="num">Orders</th>
+                            <th className="num">% of code orders</th>
+                            <th className="num">% of discounted orders</th>
+                            <th className="num">% of all orders</th>
+                            <th className="num">Discount {currency && `(${currency})`}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {discounts.codes.map((c) => (
+                            <tr key={c.code}>
+                              <td className="path" title={c.code}>{c.code}</td>
+                              <td className="num">{c.orders.toLocaleString()}</td>
+                              <td className="num">{pct(c.orders, discounts.ordersWithCode)}</td>
+                              <td className="num">{pct(c.orders, discounts.discountedOrders)}</td>
+                              <td className="num">{pct(c.orders, discounts.totalOrders)}</td>
+                              <td className="num">{nf(c.discountAmount, 2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="meta">
+                      “% of code orders” = code’s orders ÷ orders that used any code; “% of discounted
+                      orders” also counts code-free (automatic) discounts in the denominator. An order
+                      with multiple codes counts toward each, so “% of code orders” can sum to slightly
+                      over 100%.
+                    </div>
+                  </>
+                ) : (
+                  <p className="meta">No discount codes were used on orders in this window.</p>
+                )}
+              </div>
+            )}
           </>
         ) : (
           <p className="meta">Set your parameters and hit “Run”.</p>

@@ -319,3 +319,60 @@ button:disabled {
   font-weight: 700;
   letter-spacing: 0.04em;
 }
+
+/* ---------- landing-page breakdown ---------- */
+.lp-breakdown {
+  margin-top: 22px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.lp-breakdown h3 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.lp-table-wrap {
+  overflow-x: auto;
+}
+
+.lp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.lp-table th,
+.lp-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.lp-table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lp-table td.num,
+.lp-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.lp-table td.path {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lp-table tbody tr:hover {
+  background: var(--panel-2);
+}

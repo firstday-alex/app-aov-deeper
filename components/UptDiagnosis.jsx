@@ -48,12 +48,14 @@ export default function UptDiagnosis() {
   const [timeZone, setTimeZone] = useState("UTC");
   const [includeTestOrders, setIncludeTestOrders] = useState(false);
   const [dropPartial, setDropPartial] = useState(true);
+  const [byLandingPage, setByLandingPage] = useState(true);
   const [excludeText, setExcludeText] = useState(DEFAULT_EXCLUSIONS.join("\n"));
 
   const [startDate, setStartDate] = useState(daysAgoStr(90));
   const [endDate, setEndDate] = useState(todayStr());
 
   const [result, setResult] = useState(null);
+  const [sessions, setSessions] = useState(null); // [{path, sessions}] top-10 by sessions
   const [error, setError] = useState(null);
   const [running, setRunning] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
@@ -84,6 +86,7 @@ export default function UptDiagnosis() {
       granularity,
       timeZone,
       includeTestOrders,
+      landingBreakdown: byLandingPage,
       excludeNames: excludeText, // normalizeConfig splits on newline/comma server-side
       // diagnosis ignores landing-page / upsell filters
       landingPagePath: "",
@@ -101,6 +104,19 @@ export default function UptDiagnosis() {
       end: `${endDate}T23:59:59.999Z`,
     };
     const config = buildConfig();
+
+    // Top landing pages by sessions (ShopifyQL) — independent of the orders
+    // export, so kick it off in parallel. Non-fatal if it fails.
+    const sessionsPromise = byLandingPage
+      ? fetch("/api/sessions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...window, limit: 10 }),
+        })
+          .then((r) => r.json())
+          .then((d) => (d.error ? null : d.landingPages))
+          .catch(() => null)
+      : Promise.resolve(null);
 
     try {
       const startRes = await fetch("/api/metric/start", {
@@ -138,10 +154,12 @@ export default function UptDiagnosis() {
       const data = await resRes.json();
       if (!resRes.ok) throw new Error(data.error || "Failed to aggregate");
       setResult(data);
+      setSessions(await sessionsPromise);
       setStatusMsg("");
     } catch (e) {
       setError(e.message);
       setResult(null);
+      setSessions(null);
       setStatusMsg("");
     } finally {
       setRunning(false);
@@ -186,6 +204,24 @@ export default function UptDiagnosis() {
     const pt = (diagnosis.points || []).find((p) => p.label === label);
     return pt ? { name: pt.label, value: pt.value } : null;
   }, [diagnosis]);
+
+  // Join the top-10 session landing pages with their order-based UPT (same
+  // exclusions as the headline). Pages with traffic but no attributed orders
+  // show "—". Ordered by sessions desc.
+  const landingRows = useMemo(() => {
+    if (!byLandingPage || !sessions) return null;
+    const byPath = new Map((result?.landingPages || []).map((lp) => [lp.path, lp]));
+    return sessions.map((s) => {
+      const lp = byPath.get(s.path);
+      return {
+        path: s.path,
+        sessions: s.sessions,
+        transactions: lp?.transactions ?? 0,
+        units: lp?.units ?? 0,
+        upt: lp ? lp.value : null,
+      };
+    });
+  }, [byLandingPage, sessions, result]);
 
   const verdictClass = diagnosis?.ok
     ? `verdict ${diagnosis.direction} ${diagnosis.shape}`
@@ -274,6 +310,18 @@ export default function UptDiagnosis() {
           />
           <label htmlFor="diagPartial" style={{ margin: 0 }}>
             Ignore partial first/last periods in the trend
+          </label>
+        </div>
+
+        <div className="field checkbox">
+          <input
+            id="diagLP"
+            type="checkbox"
+            checked={byLandingPage}
+            onChange={(e) => setByLandingPage(e.target.checked)}
+          />
+          <label htmlFor="diagLP" style={{ margin: 0 }}>
+            Break down by landing page (top 10 by sessions)
           </label>
         </div>
 
@@ -428,6 +476,71 @@ export default function UptDiagnosis() {
                 {Number(result.diagnostics.ordersMatched || 0).toLocaleString()} orders matched ·{" "}
                 excludes: {(buildConfig().excludeNames || "").split(/[\n,]/).map((s) => s.trim()).filter(Boolean).join(", ")}
                 {result.fetch?.cached && " · ♻︎ reused recent export"}
+              </div>
+            )}
+
+            {byLandingPage && (
+              <div className="lp-breakdown">
+                <h3>UPT by landing page · top 10 by sessions</h3>
+                {landingRows && landingRows.length ? (
+                  <>
+                    <div className="lp-table-wrap">
+                      <table className="lp-table">
+                        <thead>
+                          <tr>
+                            <th>Landing page</th>
+                            <th className="num">Sessions</th>
+                            <th className="num">Orders</th>
+                            <th className="num">Units</th>
+                            <th className="num">UPT</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {landingRows.map((r) => (
+                            <tr key={r.path}>
+                              <td className="path" title={r.path}>{r.path}</td>
+                              <td className="num">{r.sessions.toLocaleString()}</td>
+                              <td className="num">{r.transactions.toLocaleString()}</td>
+                              <td className="num">{r.units.toLocaleString()}</td>
+                              <td className="num">
+                                {r.upt == null || r.transactions === 0 ? (
+                                  <span style={{ color: "var(--muted)" }}>—</span>
+                                ) : (
+                                  <strong>{nf(r.upt, 2)}</strong>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="meta">
+                      Sessions from Shopify analytics (ShopifyQL); UPT computed from orders
+                      with the same exclusions, joined on landing-page path.
+                      {result.landingCoverage && (
+                        <>
+                          {" "}
+                          Landing page attributed on{" "}
+                          {result.landingCoverage.matched > 0
+                            ? Math.round(
+                                (result.landingCoverage.withPath / result.landingCoverage.matched) * 100
+                              )
+                            : 0}
+                          % of matched orders ({result.landingCoverage.withPath.toLocaleString()} of{" "}
+                          {result.landingCoverage.matched.toLocaleString()}) — pages with traffic but
+                          no attributed orders show “—”.
+                        </>
+                      )}
+                    </div>
+                  </>
+                ) : sessions === null ? (
+                  <p className="meta">
+                    Couldn’t load session data for this window (ShopifyQL). The trend diagnosis
+                    above is unaffected.
+                  </p>
+                ) : (
+                  <p className="meta">No session data returned for this window.</p>
+                )}
               </div>
             )}
           </>
